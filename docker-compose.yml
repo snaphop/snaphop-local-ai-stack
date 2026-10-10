@@ -87,9 +87,32 @@ services:
       - redis
     command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "${LITELLM_NUM_WORKERS:-4}"]
 
+  rag-db:
+    container_name: rag-db
+    image: pgvector/pgvector:pg18
+    restart: always
+    networks:
+      - llm
+    ports:
+      - "${RAG_DB_PORT:-5433}:5432"
+    environment:
+      POSTGRES_DB: ${RAG_DB_NAME:-rag}
+      POSTGRES_USER: ${RAG_DB_USER:-rag}
+      POSTGRES_PASSWORD: ${RAG_DB_PASSWORD:-REPLACE_WITH_UNIQUE_SECRET}
+    volumes:
+      - rag-data:/var/lib/postgresql
+      - ./config/init-rag.sql:/docker-entrypoint-initdb.d/init-rag.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${RAG_DB_USER:-rag} -d ${RAG_DB_NAME:-rag}"]
+      interval: 3s
+      timeout: 2s
+      retries: 5
+
 volumes:
   litellm-data:
     name: litellm-data
+  rag-data:
+    name: rag-data
 
 networks:
   llm:

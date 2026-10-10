@@ -7,32 +7,33 @@ A production-grade, reproducible local AI inference and API gateway stack optimi
 ## Architecture Overview
 
 ```
-+-------------------------------------------------------------------------+
-|                              Local Network                              |
-|   (LAN: 127.0.0.1 / Tailscale: 100.64.0.1 / Localhost: 127.0.0.1)  |
-+------------------------------------+------------------------------------+
-                                     |
-                                     v Port 4000
-+-------------------------------------------------------------------------+
-|                        LiteLLM Proxy Gateway                            |
-|             (ghcr.io/berriai/litellm, 4 worker processes)               |
-|                                                                         |
-|  - OpenAI API (/v1/chat/completions)                                    |
-|  - Anthropic API (/v1/messages)                                         |
-|  - Admin Web UI (/ui)                                                   |
-|  - Virtual Keys, Rate Limiting, & Usage Tracking                        |
-+--------+---------------------------+---------------------------+--------+
-         |                           |                           |
-         | (Internal Docker `llm`)   | (Internal Docker `llm`)   |
-         v                           v                           v
-+------------------+       +-------------------+       +------------------+
-|  PostgreSQL 16   |       |  Redis 7 Cache    |       |   vLLM Engine    |
-|  (`litellm-db`)  |       |     (`redis`)     |       |     (`vllm`)     |
-|                  |       |                   |       |                  |
-| - User Accounts  |       | - Cross-Worker    |       | - Qwen3.8-27B-FP8|
-| - API Keys       |       |   Rate Limiting   |       | - sm_121 Native  |
-| - Volume: data   |       | - Usage Tracking  |       | - Port: 8000     |
-+------------------+       +-------------------+       +------------------+
++-----------------------------------------------------------------------------------+
+|                                  Local Network                                    |
+|       (LAN: 127.0.0.1 / Tailscale: 100.64.0.1 / Localhost: 127.0.0.1)        |
++-----------------------------------------+-----------------------------------------+
+                                          |
+                      +-------------------+-------------------+
+                      |                                       |
+                      v Port 4000                             v Port 5433
++-------------------------------------------+   +-----------------------------------+
+|           LiteLLM Proxy Gateway           |   |       PostgreSQL 18 RAG DB        |
+| (ghcr.io/berriai/litellm, 4 workers)      |   |        (`rag-db`, pgvector 0.8.7) |
+|                                           |   |                                   |
+| - OpenAI API (/v1/chat/completions)       |   | - pgvector HNSW ANN Index         |
+| - Anthropic API (/v1/messages)            |   | - Knowledge Base & Document Chunks|
+| - Admin Web UI (/ui)                      |   | - Volume: rag-data                |
++----+-------------------+-------------+----+   +-----------------+-----------------+
+     |                   |             |                          |
+     |                   |             | (Internal Docker `llm`)  |
+     v                   v             +--------------------------+
++-----------------+ +-----------------+ +-------------------------------------------+
+|  PostgreSQL 16  | |  Redis 7 Cache  | |                vLLM Engine                |
+|  (`litellm-db`) | |    (`redis`)    | |                  (`vllm`)                 |
+|                 | |                 | |                                           |
+| - LiteLLM State | | - Distributed   | | - Qwen3.8-27B-FP8 (Blackwell sm_121)      |
+| - Virtual Keys  | |   Rate Limiting | | - High-Throughput Inference Engine        |
+| - Volume: data  | | - State Sync    | | - Port: 8000 (Internal)                   |
++-----------------+ +-----------------+ +-------------------------------------------+
 ```
 
 ---
@@ -85,9 +86,10 @@ The stack can be controlled using simple `make` commands:
 | `make logs-vllm` | Stream vLLM engine logs |
 | `make logs-litellm` | Stream LiteLLM gateway logs |
 | `make test` | Run automated inference test suite against both OpenAI & Anthropic endpoints |
+| `make test-rag` | Run PostgreSQL 18 pgvector RAG test suite |
 | `make benchmark` | Run vLLM benchmark suite (e.g. `make benchmark PROMPTS=20`) |
 | `make teardown` | Stop stack and remove orphan containers |
-| `make clean-all` | **Caution**: Stops stack and deletes the persistent database volume |
+| `make clean-all` | **Caution**: Stops stack and deletes persistent database volumes (`litellm-data`, `rag-data`) |
 
 ---
 
@@ -202,6 +204,36 @@ The stack incorporates the following hardware-tailored flags:
 
 ---
 
+## PostgreSQL 18 pgvector RAG Service
+
+A dedicated vector database container (`rag-db`) running official **PostgreSQL 18.6** and **pgvector 0.8.7** is included for Retrieval-Augmented Generation workflows.
+
+- **Image**: `pgvector/pgvector:pg18`
+- **Host Port**: `5433` (`0.0.0.0:5433->5432`)
+- **Internal Network**: `rag-db:5432` on bridge network `llm`
+- **Database / User / Password**: `rag` / `rag` / `REPLACE_WITH_UNIQUE_SECRET` (configurable via `.env`)
+- **Persistent Volume**: `rag-data` (mapped at `/var/lib/postgresql`)
+- **Auto-Initialization**: [`config/init-rag.sql`](config/init-rag.sql) sets up:
+  - `vector` extension (v0.8.7) & `pgcrypto` for UUID generation
+  - `rag_documents`: parent documents and metadata
+  - `rag_chunks`: text chunks with 1536-dimensional embeddings
+  - HNSW Index (`rag_chunks_embedding_hnsw_idx`) using cosine similarity (`vector_cosine_ops`)
+  - GIN Full-Text Index (`rag_chunks_content_tsv_idx`) for hybrid lexical + semantic search
+  - Helper SQL function: `match_rag_chunks(query_embedding, match_threshold, match_count)`
+
+### Testing the RAG Pipeline
+Run the automated end-to-end RAG verification test:
+```bash
+make test-rag
+```
+This test:
+1. Validates PostgreSQL 18 and pgvector extension health.
+2. Seeds test knowledge documents into `rag_documents` and `rag_chunks`.
+3. Performs an HNSW cosine similarity search to retrieve the closest chunk.
+4. Feeds the retrieved chunk context into LiteLLM (`qwen`), validating that the model synthesizes a grounded answer.
+
+---
+
 ## Project Structure
 
 ```
@@ -213,9 +245,11 @@ snaphop-local-ai-stack/
 ├── Makefile                  # Lifecycle management shortcuts
 ├── README.md                 # Complete documentation & usage guide
 ├── config/
+│   ├── init-rag.sql          # PostgreSQL 18 pgvector schema & HNSW index init
 │   └── litellm_config.yaml   # LiteLLM routing rules, aliases, and security
 └── scripts/
     ├── bootstrap_admin.sh    # Idempotent admin account bootstrapper
     ├── test_inference.sh     # Comprehensive inference verification script
+    ├── test_rag.sh           # PostgreSQL 18 pgvector RAG test suite
     └── benchmark.sh          # vLLM serving benchmark runner
 ```

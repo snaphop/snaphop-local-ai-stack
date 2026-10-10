@@ -75,3 +75,15 @@ docker run -d --name vllm --gpus all --ipc=host --restart always \
   - `master_key` is retained solely for administrative API / programmatic requests.
   - **Fresh Setup Bootstrap**: To resolve the LiteLLM lockout risk on a brand new setup (where no DB users exist yet and env-credential login is off), `scripts/bootstrap_admin.sh` (or `make bootstrap-admin`) uses the administrative REST API with `master_key` to automatically provision the initial `proxy_admin` account defined in `.env`.
 
+## PostgreSQL 18 pgvector RAG Service
+- **Container**: `rag-db` (`pgvector/pgvector:pg18`)
+- **Versions**: PostgreSQL 18.6, pgvector v0.8.7
+- **Ports**: `5433` (Host accessible `localhost:5433`), `5432` (Internal Docker network `llm`)
+- **Volume**: `rag-data` (PostgreSQL 18 data cluster at `/var/lib/postgresql`)
+- **Schema**:
+  - `rag_documents`: Parent documents, title, source, metadata JSONB
+  - `rag_chunks`: Chunks with `vector(1536)` embeddings
+  - HNSW index: `rag_chunks_embedding_hnsw_idx` on cosine distance (`vector_cosine_ops`, `m=16`, `ef_construction=64`)
+  - GIN index: `rag_chunks_content_tsv_idx` for hybrid full-text search
+- **Verification**: `make test-rag` (`scripts/test_rag.sh`)
+

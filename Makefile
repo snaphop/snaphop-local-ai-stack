@@ -1,4 +1,4 @@
-.PHONY: help up down start stop restart logs logs-vllm logs-litellm status ps test benchmark teardown clean-all bootstrap-admin
+.PHONY: help up down start stop restart logs logs-vllm logs-litellm status ps test test-rag benchmark teardown clean-all bootstrap-admin
 
 # Default target
 help:
@@ -12,10 +12,11 @@ help:
 	@echo "make logs-vllm      - Tail vLLM container logs"
 	@echo "make logs-litellm   - Tail LiteLLM proxy logs"
 	@echo "make test           - Run test inference queries via LiteLLM"
+	@echo "make test-rag       - Run PostgreSQL 18 pgvector RAG test suite"
 	@echo "make benchmark      - Run vLLM benchmark suite (e.g. make benchmark PROMPTS=20)"
 	@echo "make bootstrap-admin- Provision/verify admin account (make bootstrap-admin EMAIL=... PASSWORD=...)"
 	@echo "make teardown       - Stop stack and remove containers"
-	@echo "make clean-all      - WARNING: Stop stack and delete database volume"
+	@echo "make clean-all      - WARNING: Stop stack and delete database volumes (litellm & rag)"
 
 # Check for .env file before starting
 check-env:
@@ -65,6 +66,9 @@ logs-litellm:
 test:
 	./scripts/test_inference.sh
 
+test-rag:
+	./scripts/test_rag.sh
+
 benchmark:
 	./scripts/benchmark.sh $(or $(PROMPTS),10) $(or $(INPUT_LEN),512) $(or $(OUTPUT_LEN),128)
 
@@ -72,6 +76,6 @@ teardown:
 	docker compose down --remove-orphans
 
 clean-all:
-	@echo "WARNING: This will destroy the database volume containing all LiteLLM users and virtual keys."
+	@echo "WARNING: This will destroy the database volumes containing all LiteLLM data and RAG vector data."
 	@read -p "Are you sure? [y/N] " ans && [ "$$ans" = "y" ] || exit 1
 	docker compose down -v --remove-orphans
