@@ -50,7 +50,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-litellm}
       POSTGRES_USER: ${POSTGRES_USER:-litellm}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-REPLACE_WITH_UNIQUE_SECRET}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes:
       - litellm-data:/var/lib/postgresql/data
     command: >
@@ -83,7 +83,7 @@ services:
       - 1.1.1.1
       - 8.8.8.8
     ports:
-      - "${LITELLM_PORT:-4000}:4000"
+      - "${LITELLM_BIND_ADDRESS:-127.0.0.1}:${LITELLM_PORT:-4000}:4000"
     ulimits:
       nofile:
         soft: 65536
@@ -91,7 +91,8 @@ services:
     volumes:
       - ./config/litellm_config.yaml:/app/config.yaml
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-litellm}:${POSTGRES_PASSWORD:-REPLACE_WITH_UNIQUE_SECRET}@litellm-db:5432/${POSTGRES_DB:-litellm}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-litellm}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@litellm-db:5432/${POSTGRES_DB:-litellm}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?Set LITELLM_MASTER_KEY in .env}
       STORE_MODEL_IN_DB: "True"
       REDIS_HOST: redis
       REDIS_PORT: "6379"
@@ -109,7 +110,7 @@ services:
     networks:
       - llm
     ports:
-      - "${RAG_DB_PORT:-5433}:5432"
+      - "${RAG_DB_BIND_ADDRESS:-127.0.0.1}:${RAG_DB_PORT:-5433}:5432"
     ulimits:
       nofile:
         soft: 65536
@@ -117,7 +118,7 @@ services:
     environment:
       POSTGRES_DB: ${RAG_DB_NAME:-rag}
       POSTGRES_USER: ${RAG_DB_USER:-rag}
-      POSTGRES_PASSWORD: ${RAG_DB_PASSWORD:-REPLACE_WITH_UNIQUE_SECRET}
+      POSTGRES_PASSWORD: ${RAG_DB_PASSWORD:?Set RAG_DB_PASSWORD in .env}
     volumes:
       - rag-data:/var/lib/postgresql
       - ./config/init-rag.sql:/docker-entrypoint-initdb.d/init-rag.sql

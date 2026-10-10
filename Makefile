@@ -1,3 +1,4 @@
+.PHONY: check
 .PHONY: help up down start stop restart logs logs-vllm logs-litellm status ps test test-rag benchmark teardown clean-all bootstrap-admin
 
 # Default target
@@ -79,3 +80,7 @@ clean-all:
 	@echo "WARNING: This will destroy the database volumes containing all LiteLLM data and RAG vector data."
 	@read -p "Are you sure? [y/N] " ans && [ "$$ans" = "y" ] || exit 1
 	docker compose down -v --remove-orphans
+
+# Static checks; no running services or GPU required.
+check:
+	@./scripts/check.sh

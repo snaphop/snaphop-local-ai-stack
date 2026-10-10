@@ -17,7 +17,7 @@ if [ -f "$PROJECT_DIR/.env" ]; then
 fi
 
 LITELLM_PORT="${LITELLM_PORT:-4000}"
-LITELLM_MASTER_KEY="${LITELLM_MASTER_KEY:-}"
+LITELLM_MASTER_KEY="${LITELLM_MASTER_KEY:?Set LITELLM_MASTER_KEY in .env}"
 LITELLM_ADMIN_EMAIL="${1:-${LITELLM_ADMIN_EMAIL:-admin@example.com}}"
 LITELLM_ADMIN_PASSWORD="${2:-${LITELLM_ADMIN_PASSWORD:-}}"
 
@@ -57,12 +57,8 @@ if [ -z "$LITELLM_ADMIN_PASSWORD" ]; then
         read -s -p "Password: " LITELLM_ADMIN_PASSWORD
         echo ""
     else
-        LITELLM_ADMIN_PASSWORD=$(openssl rand -base64 16)
-        echo "=========================================================="
-        echo " Generated temporary password for ${LITELLM_ADMIN_EMAIL}:"
-        echo "   ${LITELLM_ADMIN_PASSWORD}"
-        echo " Save this password or set LITELLM_ADMIN_PASSWORD in .env"
-        echo "=========================================================="
+        echo "Error: Set LITELLM_ADMIN_PASSWORD in .env for noninteractive bootstrap."
+        exit 1
     fi
 fi
 
@@ -92,6 +88,6 @@ if [ "$LOGIN_HTTP_CODE" = "303" ]; then
     echo "=========================================================="
 else
     echo "Warning: Verification login returned HTTP code $LOGIN_HTTP_CODE."
-    echo "Create response: $CREATE_RESP"
-    echo "Update response: $UPDATE_RESP"
+    echo "Admin bootstrap verification failed; inspect the service privately. Account credentials are not logged."
+    exit 1
 fi

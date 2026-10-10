@@ -1,6 +1,11 @@
 # SnapHop Local AI Stack
 
-A production-grade, reproducible local AI inference and API gateway stack optimized for the **NVIDIA DGX Spark** (NVIDIA GB10 Blackwell GPU, 121 GB unified memory, ARM64).
+A reproducible local AI inference and API gateway stack optimized for the **NVIDIA DGX Spark** (NVIDIA GB10 Blackwell GPU, 121 GB unified memory, ARM64).
+
+[![Verify](https://github.com/snaphop/snaphop-local-ai-stack/actions/workflows/verify.yml/badge.svg)](https://github.com/snaphop/snaphop-local-ai-stack/actions/workflows/verify.yml)
+
+Licensed under [MIT](LICENSE). See [CONTRIBUTING.md](CONTRIBUTING.md) and
+[SECURITY.md](SECURITY.md). Images and model weights retain their upstream licenses.
 
 ---
 
@@ -9,7 +14,7 @@ A production-grade, reproducible local AI inference and API gateway stack optimi
 ```
 +-----------------------------------------------------------------------------------+
 |                                  Local Network                                    |
-|       (LAN: 127.0.0.1 / Tailscale: 100.64.0.1 / Localhost: 127.0.0.1)        |
+|       (Localhost: 127.0.0.1; external access is operator-configured)        |
 +-----------------------------------------+-----------------------------------------+
                                           |
                       +-------------------+-------------------+
@@ -46,10 +51,23 @@ A production-grade, reproducible local AI inference and API gateway stack optimi
 - NVIDIA Driver 580+ (CUDA 13.0 host / CUDA 13.4 Forward Compatibility)
 
 ### 2. Configure Environment
-Copy the example environment file:
+Clone the public repository and copy the example environment file:
 ```bash
+git clone https://github.com/snaphop/snaphop-local-ai-stack.git
+cd snaphop-local-ai-stack
 cp .env.example .env
 ```
+Set unique `LITELLM_MASTER_KEY`, `POSTGRES_PASSWORD`, `RAG_DB_PASSWORD`, and
+`LITELLM_ADMIN_PASSWORD` values in `.env` before starting. A master key must use
+LiteLLM's `sk-` prefix; generate one locally with `printf 'sk-'; openssl rand -hex 32`.
+Use URL-safe database passwords because they are embedded in the database URL.
+`.env` is ignored by Git; keep it private. No working passwords are supplied.
+
+Services bind to loopback by default. Set `LITELLM_BIND_ADDRESS` or
+`RAG_DB_BIND_ADDRESS` only if you intend external access and have configured
+appropriate authentication, firewall rules, and TLS. The unauthenticated vLLM
+backend stays on loopback.
+
 Ensure your Hugging Face token is set if required for downloading gated weights:
 ```bash
 # Edit .env or export HF_TOKEN
@@ -96,6 +114,8 @@ The stack can be controlled using simple `make` commands:
 ## API Usage
 
 LiteLLM exposes standard OpenAI and Anthropic endpoints on port `4000`.
+Create a scoped virtual key in the admin UI and set `LITELLM_API_KEY` in your
+client environment before running these examples.
 
 ### 1. OpenAI-Compatible Chat Completion
 ```bash
@@ -143,11 +163,12 @@ curl -X POST http://127.0.0.1:4000/v1/messages \
 
 ### 4. Python OpenAI Client Example
 ```python
+import os
 from openai import OpenAI
 
 client = OpenAI(
     base_url="http://127.0.0.1:4000/v1",
-    api_key="REPLACE_WITH_UNIQUE_SECRET"
+    api_key=os.environ["LITELLM_API_KEY"]
 )
 
 response = client.chat.completions.create(
@@ -172,7 +193,7 @@ print(response.choices[0].message.content)
   - It creates the initial `proxy_admin` account defined in `.env` (`LITELLM_ADMIN_EMAIL` and `LITELLM_ADMIN_PASSWORD`).
   - You can also manually provision or reset an admin user at any time:
     ```bash
-    make bootstrap-admin EMAIL=admin@example.com PASSWORD=SecretPassword123!
+    make bootstrap-admin # reads admin email and password from your private .env
     ```
 - **Adding Users**:
   - Navigate to the **Users** tab (`/ui/users`).
@@ -212,9 +233,9 @@ The stack incorporates the following hardware-tailored flags:
 A dedicated vector database container (`rag-db`) running official **PostgreSQL 18.6** and **pgvector 0.8.7** is included for Retrieval-Augmented Generation workflows.
 
 - **Image**: `pgvector/pgvector:pg18`
-- **Host Port**: `5433` (`0.0.0.0:5433->5432`)
+- **Host Port**: `5433` (`127.0.0.1:5433->5432`)
 - **Internal Network**: `rag-db:5432` on bridge network `llm`
-- **Database / User / Password**: `rag` / `rag` / `REPLACE_WITH_UNIQUE_SECRET` (configurable via `.env`)
+- **Database / User / Password**: `rag` / `rag` / operator-provided `RAG_DB_PASSWORD` in `.env`
 - **Persistent Volume**: `rag-data` (mapped at `/var/lib/postgresql`)
 - **Auto-Initialization**: [`config/init-rag.sql`](config/init-rag.sql) sets up:
   - `vector` extension (v0.8.7) & `pgcrypto` for UUID generation
@@ -256,3 +277,15 @@ snaphop-local-ai-stack/
     ├── test_rag.sh           # PostgreSQL 18 pgvector RAG test suite
     └── benchmark.sh          # vLLM serving benchmark runner
 ```
+
+## Verification and project history
+
+Run `make check` for static checks without a GPU or running services. GitHub
+Verify runs this same command. `make test` and `make test-rag` require an
+operator-configured, disposable GPU stack; the RAG test modifies test records.
+
+The project moved from Gitea to GitHub. Imported revisions retain their authors,
+dates, messages, and ordering, with embedded credentials and operator-specific
+addresses replaced throughout history. This changes their commit IDs. Credentials
+previously committed to Gitea must be rotated before reuse. See
+[docs/migration.md](docs/migration.md) for migration scope.

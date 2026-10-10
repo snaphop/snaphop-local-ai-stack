@@ -13,7 +13,7 @@ if [ -f "${PROJECT_DIR}/.env" ]; then
 fi
 
 PORT="${LITELLM_PORT:-4000}"
-KEY="${LITELLM_MASTER_KEY:-REPLACE_WITH_UNIQUE_SECRET}"
+KEY="${LITELLM_MASTER_KEY:?Set LITELLM_MASTER_KEY in .env}"
 
 echo "=========================================================="
 echo "Testing SnapHop Local AI Stack on port ${PORT}"
