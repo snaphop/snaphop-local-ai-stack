@@ -58,6 +58,7 @@ docker run -d --name vllm --gpus all --ipc=host --restart always \
 ## LiteLLM Gateway
 - **Proxy Container**: `litellm` (`ghcr.io/berriai/litellm:main-latest`)
 - **Database Container**: `litellm-db` (`postgres:16-alpine`, volume: `litellm-data`)
+- **Cache & Coordination**: `redis` (`redis:7-alpine`, multi-worker rate limiting & distributed state)
 - **Port**: `4000` (LAN accessible via `127.0.0.1:4000` or Tailscale `100.64.0.1:4000`)
 - **Master API Key**: `REPLACE_WITH_UNIQUE_SECRET`
 - **Supported Model Aliases**:

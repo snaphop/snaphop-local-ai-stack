@@ -50,6 +50,18 @@ services:
     volumes:
       - litellm-data:/var/lib/postgresql/data
 
+  redis:
+    container_name: redis
+    image: redis:7-alpine
+    restart: always
+    networks:
+      - llm
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 5
+
   litellm:
     container_name: litellm
     image: ghcr.io/berriai/litellm:main-latest
@@ -66,9 +78,13 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-litellm}:${POSTGRES_PASSWORD:-REPLACE_WITH_UNIQUE_SECRET}@litellm-db:5432/${POSTGRES_DB:-litellm}
       STORE_MODEL_IN_DB: "True"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_URL: redis://redis:6379
     depends_on:
       - vllm
       - litellm-db
+      - redis
     command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "${LITELLM_NUM_WORKERS:-4}"]
 
 volumes:

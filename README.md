@@ -21,18 +21,18 @@ A production-grade, reproducible local AI inference and API gateway stack optimi
 |  - Anthropic API (/v1/messages)                                         |
 |  - Admin Web UI (/ui)                                                   |
 |  - Virtual Keys, Rate Limiting, & Usage Tracking                        |
-+-------------------+---------------------------------+-------------------+
-                    |                                 |
-                    v (Internal Docker Network `llm`) v
-+------------------------------------+   +--------------------------------+
-|       PostgreSQL 16 Database       |   |          vLLM Engine           |
-|          (`litellm-db`)            |   |             (`vllm`)           |
-|                                    |   |                                |
-|  - User & Admin Accounts           |   |  - Model: Qwen3.8-27B-FP8      |
-|  - Virtual API Keys                |   |  - Blackwell sm_121 Native     |
-|  - Persistent Volume `litellm-data`|   |  - AOT Compile & FlashInfer    |
-+------------------------------------+   |  - Port: 8000 (Internal)       |
-                                         +--------------------------------+
++--------+---------------------------+---------------------------+--------+
+         |                           |                           |
+         | (Internal Docker `llm`)   | (Internal Docker `llm`)   |
+         v                           v                           v
++------------------+       +-------------------+       +------------------+
+|  PostgreSQL 16   |       |  Redis 7 Cache    |       |   vLLM Engine    |
+|  (`litellm-db`)  |       |     (`redis`)     |       |     (`vllm`)     |
+|                  |       |                   |       |                  |
+| - User Accounts  |       | - Cross-Worker    |       | - Qwen3.8-27B-FP8|
+| - API Keys       |       |   Rate Limiting   |       | - sm_121 Native  |
+| - Volume: data   |       | - Usage Tracking  |       | - Port: 8000     |
++------------------+       +-------------------+       +------------------+
 ```
 
 ---
