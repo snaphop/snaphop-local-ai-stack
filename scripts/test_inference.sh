@@ -6,8 +6,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 if [ -f "${PROJECT_DIR}/.env" ]; then
-  # export non-comment lines
-  export $(grep -v '^#' "${PROJECT_DIR}/.env" | xargs -d '\n')
+  set -a
+  # shellcheck disable=SC1091
+  source "${PROJECT_DIR}/.env"
+  set +a
 fi
 
 PORT="${LITELLM_PORT:-4000}"
@@ -30,7 +32,7 @@ curl -s -X POST "http://127.0.0.1:${PORT}/v1/chat/completions" \
       {"role": "user", "content": "What is the capital of France? Reply in one short sentence."}
     ],
     "temperature": 0.7,
-    "max_tokens": 50
+    "max_tokens": 150
   }' | jq .
 
 echo -e "\n3. Testing Anthropic Messages protocol..."
@@ -40,7 +42,7 @@ curl -s -X POST "http://127.0.0.1:${PORT}/v1/messages" \
   -H "anthropic-version: 2023-06-01" \
   -d '{
     "model": "qwen",
-    "max_tokens": 50,
+    "max_tokens": 100,
     "messages": [
       {"role": "user", "content": "Say hello!"}
     ]
