@@ -1,20 +1,21 @@
-.PHONY: help up down start stop restart logs logs-vllm logs-litellm status ps test benchmark teardown clean-all
+.PHONY: help up down start stop restart logs logs-vllm logs-litellm status ps test benchmark teardown clean-all bootstrap-admin
 
 # Default target
 help:
 	@echo "SnapHop Local AI Stack Management"
 	@echo "=================================="
-	@echo "make up          - Start the stack in background (docker compose up -d)"
-	@echo "make down        - Stop the stack (docker compose down)"
-	@echo "make restart     - Restart all containers"
-	@echo "make status      - Show container and GPU status"
-	@echo "make logs        - Tail logs for all containers"
-	@echo "make logs-vllm   - Tail vLLM container logs"
-	@echo "make logs-litellm- Tail LiteLLM proxy logs"
-	@echo "make test        - Run test inference queries via LiteLLM"
-	@echo "make benchmark   - Run vLLM benchmark suite (e.g. make benchmark PROMPTS=20)"
-	@echo "make teardown    - Stop stack and remove containers"
-	@echo "make clean-all   - WARNING: Stop stack and delete database volume"
+	@echo "make up             - Start the stack in background and ensure admin account exists"
+	@echo "make down           - Stop the stack (docker compose down)"
+	@echo "make restart        - Restart all containers"
+	@echo "make status         - Show container and GPU status"
+	@echo "make logs           - Tail logs for all containers"
+	@echo "make logs-vllm      - Tail vLLM container logs"
+	@echo "make logs-litellm   - Tail LiteLLM proxy logs"
+	@echo "make test           - Run test inference queries via LiteLLM"
+	@echo "make benchmark      - Run vLLM benchmark suite (e.g. make benchmark PROMPTS=20)"
+	@echo "make bootstrap-admin- Provision/verify admin account (make bootstrap-admin EMAIL=... PASSWORD=...)"
+	@echo "make teardown       - Stop stack and remove containers"
+	@echo "make clean-all      - WARNING: Stop stack and delete database volume"
 
 # Check for .env file before starting
 check-env:
@@ -28,6 +29,10 @@ check-env:
 
 up: check-env
 	docker compose up -d
+	@./scripts/bootstrap_admin.sh
+
+bootstrap-admin:
+	@./scripts/bootstrap_admin.sh $(EMAIL) $(PASSWORD)
 
 start: up
 

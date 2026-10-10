@@ -165,6 +165,13 @@ print(response.choices[0].message.content)
   - `disable_env_credential_login: true` is configured in `config/litellm_config.yaml`.
   - The shared master key cannot be used to sign into the UI via the web form.
   - Sign in using your registered admin email and password.
+- **Initial Admin Bootstrapping**:
+  - On a fresh setup or after database recreation, `make up` automatically runs `./scripts/bootstrap_admin.sh` via the administrative REST API.
+  - It creates the initial `proxy_admin` account defined in `.env` (`LITELLM_ADMIN_EMAIL` and `LITELLM_ADMIN_PASSWORD`).
+  - You can also manually provision or reset an admin user at any time:
+    ```bash
+    make bootstrap-admin EMAIL=admin@example.com PASSWORD=SecretPassword123!
+    ```
 - **Adding Users**:
   - Navigate to the **Users** tab (`/ui/users`).
   - Click **`+ Invite User`**.
@@ -208,6 +215,7 @@ snaphop-local-ai-stack/
 ├── config/
 │   └── litellm_config.yaml   # LiteLLM routing rules, aliases, and security
 └── scripts/
+    ├── bootstrap_admin.sh    # Idempotent admin account bootstrapper
     ├── test_inference.sh     # Comprehensive inference verification script
     └── benchmark.sh          # vLLM serving benchmark runner
 ```

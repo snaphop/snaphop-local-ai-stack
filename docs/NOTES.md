@@ -72,3 +72,5 @@ docker run -d --name vllm --gpus all --ipc=host --restart always \
   - `disable_env_credential_login: true`: Master key and static env credentials cannot be used to log into the Web UI.
   - Users sign in using registered database credentials (`admin@example.com`).
   - `master_key` is retained solely for administrative API / programmatic requests.
+  - **Fresh Setup Bootstrap**: To resolve the LiteLLM lockout risk on a brand new setup (where no DB users exist yet and env-credential login is off), `scripts/bootstrap_admin.sh` (or `make bootstrap-admin`) uses the administrative REST API with `master_key` to automatically provision the initial `proxy_admin` account defined in `.env`.
+
