@@ -15,22 +15,23 @@
 - **Model**: `Qwen/Qwen3.8-27B-FP8` (Alibaba Qwen, 27.8B parameters, FP8 fine-grained block size 128)
 - **Disk Footprint**: ~28.75 GiB safetensors checkpoint shards in `~/.cache/huggingface`
 - **Memory Footprint**:
-  - Model weights + base: ~28.5 GiB
-  - KV Cache allocation: ~54.49 GiB (~776,874 tokens KV cache size, max concurrency 23.71x for 32,768 ctx)
-  - Total process memory: ~87.6 GiB (leaving >22 GiB available unified system memory for OS, caches, & host services)
+  - Model weights + base: ~30.74 GiB
+  - KV Cache allocation: ~59.56 GiB (~849,237 tokens KV cache size, max concurrency 25.92x for 32,768 ctx)
+  - Total process memory: ~91.5 GiB (leaving >16 GiB available unified system memory for PostgreSQL buffers, Redis, OS, & host services)
 
 ## Container Launch Command
 ```bash
 docker run -d --name vllm --gpus all --ipc=host --restart always \
   --dns 1.1.1.1 --dns 8.8.8.8 \
-  --ulimit memlock=-1 --ulimit stack=67108864 \
+  --ulimit memlock=-1 --ulimit stack=67108864 --ulimit nofile=65536:65536 \
   -p 127.0.0.1:8000:8000 \
   -v ~/.cache/huggingface:/root/.cache/huggingface \
   -v ~/.cache/vllm:/root/.cache/vllm \
   -e HF_TOKEN="$HF_TOKEN" \
+  -e CUDA_DEVICE_MAX_CONNECTIONS=1 \
   nvcr.io/nvidia/vllm:26.09-py3 \
   vllm serve Qwen/Qwen3.8-27B-FP8 \
-    --gpu-memory-utilization 0.72 \
+    --gpu-memory-utilization 0.76 \
     --max-model-len 32768 \
     --max-num-seqs 64 \
     --max-num-batched-tokens 8192 \
@@ -41,11 +42,14 @@ docker run -d --name vllm --gpus all --ipc=host --restart always \
 ```
 
 > **Performance Optimizations Applied**:
-> - **KV Cache Expansion (`--gpu-memory-utilization 0.72`)**: Increases token cache capacity to 776,874 tokens (+39% larger than 0.6 baseline).
+> - **KV Cache Expansion (`--gpu-memory-utilization 0.76`)**: Allocates ~59.56 GiB KV cache (849,237 tokens capacity, 25.92x concurrency at 32k context).
+> - **CUDA Device Stream Overlap (`CUDA_DEVICE_MAX_CONNECTIONS=1`)**: Enables asynchronous multi-stream GPU kernel execution.
 > - **Batch Concurrency (`--max-num-seqs 64`)**: Eliminates the 16-request queue bottleneck, enabling up to 64 requests to decode concurrently.
 > - **Prefill Acceleration (`--max-num-batched-tokens 8192`)**: Uses 4x larger prefill token batches for higher Blackwell Tensor Core utilization.
 > - **Asynchronous Scheduling (`--async-scheduling`)**: Overlaps CPU scheduler iterations with GPU kernel execution.
-> - **LiteLLM Multi-Worker Scaling (`--num_workers 4`)**: Distributes gateway request parsing and streaming across host ARM64 cores.
+> - **LiteLLM Multi-Worker Scaling (`--num_workers 8`)**: Scales across the 20 ARM64 cores (10 Cortex-X925 + 10 Cortex-A725).
+> - **PostgreSQL 18 Vector Tuning**: 2GB `shared_buffers`, 1GB `maintenance_work_mem`, 64MB `work_mem`, 8 parallel workers for in-memory HNSW vector index construction.
+> - **Redis 7 In-Memory Caching**: 1GB maxmemory with LRU eviction and 1024 connection backlog.
 
 ## Verification & High-Concurrency Benchmarks
 - **Models Endpoint**: `GET http://127.0.0.1:8000/v1/models` returns `Qwen/Qwen3.8-27B-FP8`.

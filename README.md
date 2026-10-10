@@ -188,13 +188,16 @@ print(response.choices[0].message.content)
 
 The stack incorporates the following hardware-tailored flags:
 
-| Flag | Value | Rationale |
+| Flag / Setting | Value | Rationale |
 | :--- | :--- | :--- |
-| `--gpu-memory-utilization` | `0.72` | Allocates ~54.5 GiB KV cache (~776,874 tokens) while leaving >22 GiB system RAM free |
-| `--max-num-seqs` | `64` | Removes 16-request concurrency bottleneck, enabling up to 64 parallel decode streams |
+| `--gpu-memory-utilization` | `0.76` | Allocates ~59.6 GiB KV cache (~849,237 tokens, 25.9x parallel 32k context) while leaving >16 GiB system RAM free |
+| `CUDA_DEVICE_MAX_CONNECTIONS` | `1` | Enables asynchronous multi-stream GPU kernel execution and overlaps data transfers with compute |
+| `--max-num-seqs` | `64` | Removes concurrency bottleneck, enabling up to 64 parallel decode streams |
 | `--max-num-batched-tokens` | `8192` | 4x larger prefill batch size maximizing Blackwell Tensor Core compute efficiency |
 | `--async-scheduling` | Enabled | Overlaps CPU host scheduler steps with GPU kernel execution |
-| `--num_workers` | `4` | Scales LiteLLM gateway across ARM64 host cores |
+| `--num_workers` (LiteLLM) | `8` | Scales across the 20 ARM64 CPU cores (10 Cortex-X925 + 10 Cortex-A725) for high-concurrency gateway throughput |
+| PostgreSQL 18 Buffer Tuning | `shared_buffers=2GB`, `maintenance_work_mem=1GB` | In-memory HNSW vector index construction without disk spilling; 8 parallel workers |
+| Redis In-Memory Limits | `1GB` maxmemory, `allkeys-lru` | High-throughput distributed rate limiting and state sync with 1024 socket backlog |
 
 ### Benchmark Results (30 Concurrent Requests)
 - **Request Throughput**: 1.12 req/s (2.4x higher than 16-seq baseline)

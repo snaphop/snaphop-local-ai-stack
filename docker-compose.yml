@@ -12,6 +12,9 @@ services:
     ulimits:
       memlock: -1
       stack: 67108864
+      nofile:
+        soft: 65536
+        hard: 65536
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
@@ -19,6 +22,7 @@ services:
       - ${HOST_CACHE_DIR_VLLM:-~/.cache/vllm}:/root/.cache/vllm
     environment:
       HF_TOKEN: ${HF_TOKEN}
+      CUDA_DEVICE_MAX_CONNECTIONS: "1"
     deploy:
       resources:
         reservations:
@@ -28,7 +32,7 @@ services:
               capabilities: [gpu]
     command: >
       vllm serve ${VLLM_MODEL:-Qwen/Qwen3.8-27B-FP8}
-        --gpu-memory-utilization ${VLLM_GPU_MEMORY_UTILIZATION:-0.72}
+        --gpu-memory-utilization ${VLLM_GPU_MEMORY_UTILIZATION:-0.76}
         --max-model-len ${VLLM_MAX_MODEL_LEN:-32768}
         --max-num-seqs ${VLLM_MAX_NUM_SEQS:-64}
         --max-num-batched-tokens ${VLLM_MAX_NUM_BATCHED_TOKENS:-8192}
@@ -49,6 +53,12 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-REPLACE_WITH_UNIQUE_SECRET}
     volumes:
       - litellm-data:/var/lib/postgresql/data
+    command: >
+      postgres
+        -c shared_buffers=512MB
+        -c work_mem=32MB
+        -c effective_cache_size=2GB
+        -c random_page_cost=1.1
 
   redis:
     container_name: redis
@@ -56,6 +66,7 @@ services:
     restart: always
     networks:
       - llm
+    command: ["redis-server", "--maxmemory", "1gb", "--maxmemory-policy", "allkeys-lru", "--save", "900", "1", "--tcp-backlog", "1024"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 3s
@@ -73,6 +84,10 @@ services:
       - 8.8.8.8
     ports:
       - "${LITELLM_PORT:-4000}:4000"
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     volumes:
       - ./config/litellm_config.yaml:/app/config.yaml
     environment:
@@ -85,7 +100,7 @@ services:
       - vllm
       - litellm-db
       - redis
-    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "${LITELLM_NUM_WORKERS:-4}"]
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "${LITELLM_NUM_WORKERS:-8}"]
 
   rag-db:
     container_name: rag-db
@@ -95,6 +110,10 @@ services:
       - llm
     ports:
       - "${RAG_DB_PORT:-5433}:5432"
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     environment:
       POSTGRES_DB: ${RAG_DB_NAME:-rag}
       POSTGRES_USER: ${RAG_DB_USER:-rag}
@@ -102,6 +121,17 @@ services:
     volumes:
       - rag-data:/var/lib/postgresql
       - ./config/init-rag.sql:/docker-entrypoint-initdb.d/init-rag.sql
+    command: >
+      postgres
+        -c shared_buffers=2GB
+        -c work_mem=64MB
+        -c maintenance_work_mem=1GB
+        -c effective_cache_size=8GB
+        -c max_parallel_workers=8
+        -c max_parallel_workers_per_gather=4
+        -c max_parallel_maintenance_workers=4
+        -c random_page_cost=1.1
+        -c effective_io_concurrency=200
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${RAG_DB_USER:-rag} -d ${RAG_DB_NAME:-rag}"]
       interval: 3s
