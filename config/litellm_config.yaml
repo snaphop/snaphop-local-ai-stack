@@ -1,0 +1,29 @@
+model_list:
+  # Local vLLM Qwen 3.8 27B model (Primary canonical name)
+  - model_name: Qwen/Qwen3.8-27B-FP8
+    litellm_params:
+      model: openai/Qwen/Qwen3.8-27B-FP8
+      api_base: http://vllm:8000/v1
+      api_key: none
+
+  # Convenience aliases
+  - model_name: qwen
+    litellm_params:
+      model: openai/Qwen/Qwen3.8-27B-FP8
+      api_base: http://vllm:8000/v1
+      api_key: none
+
+  - model_name: qwen3.8-27b
+    litellm_params:
+      model: openai/Qwen/Qwen3.8-27B-FP8
+      api_base: http://vllm:8000/v1
+      api_key: none
+
+litellm_settings:
+  drop_params: true
+  telemetry: false
+  set_verbose: false
+
+general_settings:
+  master_key: "REPLACE_WITH_UNIQUE_SECRET"
+  disable_env_credential_login: true

@@ -1,0 +1,13 @@
+# Environment & Secrets
+.env
+*.env.local
+
+# Logs & temp files
+*.log
+.system_generated/
+tmp/
+scratch/
+
+# OS artifacts
+.DS_Store
+Thumbs.db

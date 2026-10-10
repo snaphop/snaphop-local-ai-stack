@@ -1,0 +1,72 @@
+.PHONY: help up down start stop restart logs logs-vllm logs-litellm status ps test benchmark teardown clean-all
+
+# Default target
+help:
+	@echo "SnapHop Local AI Stack Management"
+	@echo "=================================="
+	@echo "make up          - Start the stack in background (docker compose up -d)"
+	@echo "make down        - Stop the stack (docker compose down)"
+	@echo "make restart     - Restart all containers"
+	@echo "make status      - Show container and GPU status"
+	@echo "make logs        - Tail logs for all containers"
+	@echo "make logs-vllm   - Tail vLLM container logs"
+	@echo "make logs-litellm- Tail LiteLLM proxy logs"
+	@echo "make test        - Run test inference queries via LiteLLM"
+	@echo "make benchmark   - Run vLLM benchmark suite (e.g. make benchmark PROMPTS=20)"
+	@echo "make teardown    - Stop stack and remove containers"
+	@echo "make clean-all   - WARNING: Stop stack and delete database volume"
+
+# Check for .env file before starting
+check-env:
+	@if [ ! -f .env ]; then \
+		echo "Creating .env from .env.example..."; \
+		cp .env.example .env; \
+		if [ -n "$$HF_TOKEN" ]; then \
+			sed -i "s|HF_TOKEN=your_huggingface_token_here|HF_TOKEN=$$HF_TOKEN|" .env; \
+		fi \
+	fi
+
+up: check-env
+	docker compose up -d
+
+start: up
+
+down:
+	docker compose down
+
+stop: down
+
+restart:
+	docker compose restart
+
+status:
+	@echo "=== Container Status ==="
+	@docker compose ps
+	@echo ""
+	@echo "=== GPU Status ==="
+	@nvidia-smi
+
+ps: status
+
+logs:
+	docker compose logs -f
+
+logs-vllm:
+	docker compose logs -f vllm
+
+logs-litellm:
+	docker compose logs -f litellm
+
+test:
+	./scripts/test_inference.sh
+
+benchmark:
+	./scripts/benchmark.sh $(or $(PROMPTS),10) $(or $(INPUT_LEN),512) $(or $(OUTPUT_LEN),128)
+
+teardown:
+	docker compose down --remove-orphans
+
+clean-all:
+	@echo "WARNING: This will destroy the database volume containing all LiteLLM users and virtual keys."
+	@read -p "Are you sure? [y/N] " ans && [ "$$ans" = "y" ] || exit 1
+	docker compose down -v --remove-orphans
