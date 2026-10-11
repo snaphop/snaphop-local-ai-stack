@@ -1,21 +1,20 @@
 model_list:
-  # Local vLLM Qwen 3.8 27B model (Primary canonical name)
-  - model_name: Qwen/Qwen3.8-27B-FP8
+  # Canonical name and aliases follow VLLM_MODEL. VLLM_LITELLM_MODEL is the openai/ route.
+  - model_name: os.environ/VLLM_MODEL
     litellm_params:
-      model: openai/Qwen/Qwen3.8-27B-FP8
+      model: os.environ/VLLM_LITELLM_MODEL
       api_base: http://vllm:8000/v1
       api_key: none
 
-  # Convenience aliases
   - model_name: qwen
     litellm_params:
-      model: openai/Qwen/Qwen3.8-27B-FP8
+      model: os.environ/VLLM_LITELLM_MODEL
       api_base: http://vllm:8000/v1
       api_key: none
 
   - model_name: qwen3.8-27b
     litellm_params:
-      model: openai/Qwen/Qwen3.8-27B-FP8
+      model: os.environ/VLLM_LITELLM_MODEL
       api_base: http://vllm:8000/v1
       api_key: none
 

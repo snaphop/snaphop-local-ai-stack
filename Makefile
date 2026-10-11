@@ -15,7 +15,7 @@ help:
 	@echo "make test           - Run test inference queries via LiteLLM"
 	@echo "make test-rag       - Run PostgreSQL 18 pgvector RAG test suite"
 	@echo "make benchmark      - Run vLLM benchmark suite (e.g. make benchmark PROMPTS=20)"
-	@echo "make bootstrap-admin- Provision/verify admin account (make bootstrap-admin EMAIL=... PASSWORD=...)"
+	@echo "make bootstrap-admin - Ensure the .env admin password can sign in (EMAIL and PASSWORD override)"
 	@echo "make teardown       - Stop stack and remove containers"
 	@echo "make clean-all      - WARNING: Stop stack and delete database volumes (litellm & rag)"
 
@@ -34,7 +34,9 @@ up: check-env
 	@./scripts/bootstrap_admin.sh
 
 bootstrap-admin:
-	@./scripts/bootstrap_admin.sh $(EMAIL) $(PASSWORD)
+	@$(eval export EMAIL)
+	@$(eval export PASSWORD)
+	@./scripts/bootstrap_admin.sh
 
 start: up
 
@@ -71,7 +73,7 @@ test-rag:
 	./scripts/test_rag.sh
 
 benchmark:
-	./scripts/benchmark.sh $(or $(PROMPTS),10) $(or $(INPUT_LEN),512) $(or $(OUTPUT_LEN),128)
+	./scripts/benchmark.sh '$(subst ','"'"',$(or $(value PROMPTS),10))' '$(subst ','"'"',$(or $(value INPUT_LEN),512))' '$(subst ','"'"',$(or $(value OUTPUT_LEN),128))'
 
 teardown:
 	docker compose down --remove-orphans

@@ -53,6 +53,12 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes:
       - litellm-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-litellm} -d ${POSTGRES_DB:-litellm}"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+      start_period: 20s
     command: >
       postgres
         -c shared_buffers=512MB
@@ -97,15 +103,21 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       REDIS_URL: redis://redis:6379
+      VLLM_MODEL: ${VLLM_MODEL:-Qwen/Qwen3.8-27B-FP8}
+      VLLM_LITELLM_MODEL: openai/${VLLM_MODEL:-Qwen/Qwen3.8-27B-FP8}
     depends_on:
-      - vllm
-      - litellm-db
-      - redis
+      vllm:
+        condition: service_started
+      litellm-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "${LITELLM_NUM_WORKERS:-8}"]
 
   rag-db:
     container_name: rag-db
     image: pgvector/pgvector:pg18
+    shm_size: "2gb"
     restart: always
     networks:
       - llm
