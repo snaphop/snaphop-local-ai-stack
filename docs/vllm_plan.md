@@ -1,12 +1,10 @@
-# Plan: Local vLLM inference on this machine
+# Plan: Local vLLM inference on DGX Spark
 
-## Machine facts (verified)
-- **NVIDIA DGX Spark-class box**: GPU = NVIDIA GB10 (Blackwell, sm_121), **aarch64** (Cortex-X925/A725, 20 cores), Ubuntu 24.04, kernel 7.0 nvidia.
-- **121 GB unified CPU/GPU memory** (nvidia-smi shows memory "Not Supported"; use `free -h`). 15 GB swap, 2.5 TB disk free.
-- Driver 580.178.04, CUDA 13.0 (`/usr/local/cuda`, nvcc 13.0). Python 3.12.3, miniconda present, `uv` NOT installed.
-- Docker 29.6.2 works for user (in `docker` group). `nvidia-container-toolkit` 1.20.1 **is installed**, but `/etc/docker/daemon.json` has no nvidia runtime and `docker info` lists only `runc`, so the Docker GPU config step (Step 1) is needed. Passwordless sudo works. Running containers: `postgresql-pgvector`, `watchtower` (Open WebUI is pulled but not running). Docker live-restore is off, so restarting docker restarts those containers.
-- `HF_TOKEN` is already set in the environment. **Never write it into files, logs or commands. Reference `$HF_TOKEN` only.**
-- vllm/torch are not installed. No HF cache yet.
+## Target platform
+- **NVIDIA DGX Spark-class system**: GPU = NVIDIA GB10 (Blackwell, sm_121), **aarch64** (Cortex-X925/A725, 20 cores), 121 GB unified CPU/GPU memory. `nvidia-smi` may show memory as "Not Supported"; use `free -h`.
+- NVIDIA driver 580+ and CUDA 13. Confirm with `nvidia-smi` before serving.
+- Docker with the NVIDIA Container Toolkit. `docker info` must list an `nvidia` runtime before `--gpus all` works. If it lists only `runc`, do Step 1.
+- Export `HF_TOKEN` in the environment when a model is gated. Never write the token into files, logs, or commands.
 
 ## Key constraints
 1. GB10 is sm_121 on aarch64. A plain `pip install vllm` often pulls wheels without proper sm_121 or aarch64+CUDA 13 support. Prefer the **official NVIDIA NGC vLLM container**, which is built for DGX Spark. Use a pip/uv install only as a fallback.
@@ -21,13 +19,13 @@ docker run --rm --gpus all nvcr.io/nvidia/cuda:13.0.0-base-ubuntu24.04 nvidia-sm
 If the last command fails with a runtime error, fix the NVIDIA container toolkit (Step 1). If it works, skip to Step 2.
 
 ## Step 1: Enable GPU in Docker (only if needed)
+Install the NVIDIA Container Toolkit if it is not already present, then:
 ```bash
-# toolkit is already installed (1.20.1); no apt install needed
 sudo nvidia-ctk runtime configure --runtime=docker
 sudo systemctl restart docker
 docker info | grep -i runtimes                     # expect "nvidia"
 ```
-`nvidia-ctk` merges into `/etc/docker/daemon.json` (it has custom log, dns and bip settings), so back it up first: `sudo cp /etc/docker/daemon.json /etc/docker/daemon.json.bak`, and confirm those keys survive. Restarting docker briefly restarts `postgresql-pgvector` and `watchtower`. Warn the user, and do it only when nothing depends on pgvector. If `--gpus all` still fails afterwards, the alternative is `--runtime=nvidia` on `docker run`.
+`nvidia-ctk` merges into `/etc/docker/daemon.json`. Back that file up first and confirm the existing keys survive. Restarting Docker restarts every running container, so do it only when that is acceptable. If `--gpus all` still fails, pass `--runtime=nvidia` on `docker run`.
 
 ## Step 2: Choose the vLLM image (Path A, preferred)
 1. Look up the current DGX Spark vLLM guidance and pick the image tag: <https://build.nvidia.com/spark> (vLLM playbook) and the NGC catalog `nvcr.io/nvidia/vllm`. Tags look like `nvcr.io/nvidia/vllm:26.04-py3` or newer. Use the newest tag that supports GB10. Pin it by tag and don't use `latest`. **Qwen3.8 uses the new `Qwen3_5ForConditionalGeneration` architecture (hybrid linear + full attention), so confirm the image's vLLM is recent enough** (`docker run --rm <image> vllm --version`, then compare it with the minimum version in the vLLM recipe <https://recipes.vllm.ai/Qwen/Qwen3.8-27B>). If the NGC image is too old, use a newer NGC tag, or the community Spark build `eugr/spark-vllm-docker` (clone and follow its README). Ask the user before using a non-NVIDIA image.
@@ -71,7 +69,7 @@ Also check the output is coherent, `nvidia-smi` and `free -h` show the expected 
 - Record what worked (model, flags, tokens/s) in `~/workspace/vllm/NOTES.md`.
 
 ## Step 6: Integrate / operate
-- Open WebUI is already pulled. Because vLLM is published on `127.0.0.1` only, a container can't reach it through `host.docker.internal`. Put both containers on one user-defined network (`docker network create llm`, then add `--network llm` to both) and point Open WebUI at `http://vllm:8000/v1`. Either way, do not publish the port on `0.0.0.0` unless the user asks. The key can be any string if no `--api-key` is set.
+- A container cannot reach a port published only on `127.0.0.1` through `host.docker.internal`. Put the client on the same user-defined network (`docker network create llm`, then add `--network llm`) and point it at `http://vllm:8000/v1`. Do not publish the port on `0.0.0.0` unless the operator asks. The key can be any string if no `--api-key` is set.
 - Manage: `docker stop|start|logs vllm`. To swap models, `docker rm -f vllm` and re-run with a new model. Only one large model at a time because memory is shared.
 - Optional: put the run command in `~/workspace/vllm/docker-compose.yml` for reproducibility.
 
@@ -90,5 +88,5 @@ If the torch/vLLM wheels lack sm_121 kernels, stop and report back. Don't try a 
 ## Agent guardrails
 - Don't print or persist `$HF_TOKEN`.
 - Ask before using sudo or changing system config (Step 1) and before downloading models over ~50 GB.
-- Don't kill other containers (open-webui, pgvector). Check `free -h` before launching and keep ≥20 GB free for the OS.
+- Don't stop other containers. Check `free -h` before launching and keep at least 20 GB free for the OS.
 - Success criteria: `/v1/chat/completions` returns a sensible completion from a locally served model, bound to localhost, with the exact launch command saved in NOTES.md.

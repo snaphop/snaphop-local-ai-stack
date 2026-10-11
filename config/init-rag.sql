@@ -30,21 +30,25 @@ CREATE TABLE IF NOT EXISTS rag_chunks (
 );
 
 -- HNSW Index for fast approximate cosine similarity search
-CREATE INDEX IF NOT EXISTS rag_chunks_embedding_hnsw_idx 
-ON rag_chunks 
+CREATE INDEX IF NOT EXISTS rag_chunks_embedding_hnsw_idx
+ON rag_chunks
 USING hnsw (embedding vector_cosine_ops)
 WITH (m = 16, ef_construction = 64);
 
--- Full-text GIN index for hybrid lexical + semantic search
-CREATE INDEX IF NOT EXISTS rag_chunks_content_tsv_idx 
-ON rag_chunks 
+-- GIN index used when match_rag_chunks is given query_text.
+CREATE INDEX IF NOT EXISTS rag_chunks_content_tsv_idx
+ON rag_chunks
 USING gin (to_tsvector('english', content));
 
--- Helper function for hybrid RAG search (vector similarity + full-text rank)
-CREATE OR REPLACE FUNCTION match_rag_chunks(
+-- Cosine search. query_text adds English full-text rank from the GIN index.
+-- Replacing the argument list requires dropping the previous signature.
+DROP FUNCTION IF EXISTS match_rag_chunks(vector, float, int);
+DROP FUNCTION IF EXISTS match_rag_chunks(vector, float, int, text);
+CREATE FUNCTION match_rag_chunks(
     query_embedding vector(1536),
     match_threshold float DEFAULT 0.5,
-    match_count int DEFAULT 5
+    match_count int DEFAULT 5,
+    query_text text DEFAULT NULL
 )
 RETURNS TABLE (
     id UUID,
@@ -53,16 +57,47 @@ RETURNS TABLE (
     metadata JSONB,
     similarity float
 )
-LANGUAGE sql STABLE
+LANGUAGE plpgsql
+STABLE
 AS $$
-    SELECT
-        id,
-        document_id,
-        content,
-        metadata,
-        1 - (rag_chunks.embedding <=> query_embedding) AS similarity
-    FROM rag_chunks
-    WHERE 1 - (rag_chunks.embedding <=> query_embedding) > match_threshold
-    ORDER BY similarity DESC
-    LIMIT match_count;
+BEGIN
+    IF query_text IS NULL OR btrim(query_text) = '' THEN
+        RETURN QUERY
+        SELECT ranked.id, ranked.document_id, ranked.content, ranked.metadata, ranked.score
+        FROM (
+            SELECT
+                c.id,
+                c.document_id,
+                c.content,
+                c.metadata,
+                (1 - (c.embedding <=> query_embedding))::double precision AS score
+            FROM rag_chunks AS c
+            WHERE 1 - (c.embedding <=> query_embedding) > match_threshold
+            ORDER BY c.embedding <=> query_embedding
+            LIMIT match_count
+        ) AS ranked;
+    ELSE
+        RETURN QUERY
+        SELECT ranked.id, ranked.document_id, ranked.content, ranked.metadata, ranked.score
+        FROM (
+            SELECT
+                c.id,
+                c.document_id,
+                c.content,
+                c.metadata,
+                (
+                    (1 - (c.embedding <=> query_embedding))
+                    + ts_rank(
+                        to_tsvector('english', c.content),
+                        websearch_to_tsquery('english', query_text)
+                    )
+                )::double precision AS score
+            FROM rag_chunks AS c
+            WHERE 1 - (c.embedding <=> query_embedding) > match_threshold
+               OR to_tsvector('english', c.content) @@ websearch_to_tsquery('english', query_text)
+            ORDER BY score DESC
+            LIMIT match_count
+        ) AS ranked;
+    END IF;
+END;
 $$;

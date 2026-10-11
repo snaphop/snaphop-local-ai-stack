@@ -22,7 +22,7 @@ Licensed under [MIT](LICENSE). See [CONTRIBUTING.md](CONTRIBUTING.md) and
                       v Port 4000                             v Port 5433
 +-------------------------------------------+   +-----------------------------------+
 |           LiteLLM Proxy Gateway           |   |       PostgreSQL 18 RAG DB        |
-| (ghcr.io/berriai/litellm, 4 workers)      |   |        (`rag-db`, pgvector 0.8.7) |
+| (ghcr.io/berriai/litellm, 8 workers)      |   |        (`rag-db`, pgvector 0.8.7) |
 |                                           |   |                                   |
 | - OpenAI API (/v1/chat/completions)       |   | - pgvector HNSW ANN Index         |
 | - Anthropic API (/v1/messages)            |   | - Knowledge Base & Document Chunks|
@@ -37,7 +37,7 @@ Licensed under [MIT](LICENSE). See [CONTRIBUTING.md](CONTRIBUTING.md) and
 |                 | |                 | |                                           |
 | - LiteLLM State | | - Distributed   | | - Qwen3.8-27B-FP8 (Blackwell sm_121)      |
 | - Virtual Keys  | |   Rate Limiting | | - High-Throughput Inference Engine        |
-| - Volume: data  | | - State Sync    | | - Port: 8000 (Internal)                   |
+| - Volume: data  | | - State Sync    | | - Port: 8000 (loopback)                   |
 +-----------------+ +-----------------+ +-------------------------------------------+
 ```
 
@@ -60,8 +60,11 @@ cp .env.example .env
 Set unique `LITELLM_MASTER_KEY`, `POSTGRES_PASSWORD`, `RAG_DB_PASSWORD`, and
 `LITELLM_ADMIN_PASSWORD` values in `.env` before starting. A master key must use
 LiteLLM's `sk-` prefix; generate one locally with `printf 'sk-'; openssl rand -hex 32`.
-Use URL-safe database passwords because they are embedded in the database URL.
-`.env` is ignored by Git; keep it private. No working passwords are supplied.
+The admin password must be at least 12 characters and include an uppercase letter,
+a lowercase letter, a digit, and a special character. `.env` values are literal:
+`$` and quotes are not expanded. Use URL-safe database passwords because they are
+embedded in the database URL. `.env` is ignored by Git; keep it private. No working
+passwords are supplied.
 
 Services bind to loopback by default. Set `LITELLM_BIND_ADDRESS` or
 `RAG_DB_BIND_ADDRESS` only if you intend external access and have configured
@@ -190,11 +193,9 @@ print(response.choices[0].message.content)
   - Sign in using your registered admin email and password.
 - **Initial Admin Bootstrapping**:
   - On a fresh setup or after database recreation, `make up` automatically runs `./scripts/bootstrap_admin.sh` via the administrative REST API.
-  - It creates the initial `proxy_admin` account defined in `.env` (`LITELLM_ADMIN_EMAIL` and `LITELLM_ADMIN_PASSWORD`).
-  - You can also manually provision or reset an admin user at any time:
-    ```bash
-    make bootstrap-admin # reads admin email and password from your private .env
-    ```
+  - It creates the initial `proxy_admin` account defined in `.env` (`LITELLM_ADMIN_EMAIL` and `LITELLM_ADMIN_PASSWORD`) and checks that this password can sign in. A later run does that check again. If the sign-in fails, bootstrap sets the `.env` password once more.
+  - The first UI sign-in must choose a new password. LiteLLM flags passwords set through the admin API.
+  - Put the password in `.env`. To override it without Make interpreting `$`, export it in the environment: `EMAIL='operator@example.com' PASSWORD='...' make bootstrap-admin`.
 - **Adding Users**:
   - Navigate to the **Users** tab (`/ui/users`).
   - Click **`+ Invite User`**.
@@ -212,12 +213,12 @@ The stack incorporates the following hardware-tailored flags:
 | Flag / Setting | Value | Rationale |
 | :--- | :--- | :--- |
 | `--gpu-memory-utilization` | `0.76` | Allocates ~59.6 GiB KV cache (~849,237 tokens, 25.9x parallel 32k context) while leaving >16 GiB system RAM free |
-| `CUDA_DEVICE_MAX_CONNECTIONS` | `1` | Enables asynchronous multi-stream GPU kernel execution and overlaps data transfers with compute |
+| `CUDA_DEVICE_MAX_CONNECTIONS` | `1` | Limits the process to one concurrent CUDA device connection |
 | `--max-num-seqs` | `64` | Removes concurrency bottleneck, enabling up to 64 parallel decode streams |
 | `--max-num-batched-tokens` | `8192` | 4x larger prefill batch size maximizing Blackwell Tensor Core compute efficiency |
 | `--async-scheduling` | Enabled | Overlaps CPU host scheduler steps with GPU kernel execution |
 | `--num_workers` (LiteLLM) | `8` | Scales across the 20 ARM64 CPU cores (10 Cortex-X925 + 10 Cortex-A725) for high-concurrency gateway throughput |
-| PostgreSQL 18 Buffer Tuning | `shared_buffers=2GB`, `maintenance_work_mem=1GB` | In-memory HNSW vector index construction without disk spilling; 8 parallel workers |
+| PostgreSQL 18 Buffer Tuning | `shared_buffers=2GB`, `maintenance_work_mem=1GB`, `shm_size=2GB` | Parallel index builds allocate dynamic shared memory in `/dev/shm`; Docker's 64MB default is too small for 8 workers |
 | Redis In-Memory Limits | `1GB` maxmemory, `allkeys-lru` | High-throughput distributed rate limiting and state sync with 1024 socket backlog |
 
 ### Benchmark Results (30 Concurrent Requests)
@@ -242,8 +243,9 @@ A dedicated vector database container (`rag-db`) running official **PostgreSQL 1
   - `rag_documents`: parent documents and metadata
   - `rag_chunks`: text chunks with 1536-dimensional embeddings
   - HNSW Index (`rag_chunks_embedding_hnsw_idx`) using cosine similarity (`vector_cosine_ops`)
-  - GIN Full-Text Index (`rag_chunks_content_tsv_idx`) for hybrid lexical + semantic search
-  - Helper SQL function: `match_rag_chunks(query_embedding, match_threshold, match_count)`
+  - GIN Full-Text Index (`rag_chunks_content_tsv_idx`) for the optional lexical term
+  - Helper SQL function: `match_rag_chunks(query_embedding, match_threshold, match_count, query_text)`. Without `query_text` the score is cosine similarity. With it, the score adds English `ts_rank` from the GIN index.
+  - The init script runs when the `rag-data` volume is first created. On an existing volume, apply `config/init-rag.sql` again to replace `match_rag_chunks`.
 
 ### Testing the RAG Pipeline
 Run the automated end-to-end RAG verification test:
@@ -253,7 +255,7 @@ make test-rag
 This test:
 1. Validates PostgreSQL 18 and pgvector extension health.
 2. Seeds test knowledge documents into `rag_documents` and `rag_chunks`.
-3. Performs an HNSW cosine similarity search to retrieve the closest chunk.
+3. Checks that the HNSW index exists and calls `match_rag_chunks` with a query vector that is not a stored embedding.
 4. Feeds the retrieved chunk context into LiteLLM (`qwen`), validating that the model synthesizes a grounded answer.
 
 ---
@@ -272,7 +274,8 @@ snaphop-local-ai-stack/
 │   ├── init-rag.sql          # PostgreSQL 18 pgvector schema & HNSW index init
 │   └── litellm_config.yaml   # LiteLLM routing rules, aliases, and security
 └── scripts/
-    ├── bootstrap_admin.sh    # Idempotent admin account bootstrapper
+    ├── load_env.sh           # Literal .env loader shared by the scripts
+    ├── bootstrap_admin.sh    # Admin account bootstrap and sign-in check
     ├── test_inference.sh     # Comprehensive inference verification script
     ├── test_rag.sh           # PostgreSQL 18 pgvector RAG test suite
     └── benchmark.sh          # vLLM serving benchmark runner

@@ -43,12 +43,12 @@ docker run -d --name vllm --gpus all --ipc=host --restart always \
 
 > **Performance Optimizations Applied**:
 > - **KV Cache Expansion (`--gpu-memory-utilization 0.76`)**: Allocates ~59.56 GiB KV cache (849,237 tokens capacity, 25.92x concurrency at 32k context).
-> - **CUDA Device Stream Overlap (`CUDA_DEVICE_MAX_CONNECTIONS=1`)**: Enables asynchronous multi-stream GPU kernel execution.
+> - **CUDA Device Connections (`CUDA_DEVICE_MAX_CONNECTIONS=1`)**: Limits the process to one concurrent CUDA device connection. Overlap of scheduling and kernels is `--async-scheduling`.
 > - **Batch Concurrency (`--max-num-seqs 64`)**: Eliminates the 16-request queue bottleneck, enabling up to 64 requests to decode concurrently.
 > - **Prefill Acceleration (`--max-num-batched-tokens 8192`)**: Uses 4x larger prefill token batches for higher Blackwell Tensor Core utilization.
 > - **Asynchronous Scheduling (`--async-scheduling`)**: Overlaps CPU scheduler iterations with GPU kernel execution.
 > - **LiteLLM Multi-Worker Scaling (`--num_workers 8`)**: Scales across the 20 ARM64 cores (10 Cortex-X925 + 10 Cortex-A725).
-> - **PostgreSQL 18 Vector Tuning**: 2GB `shared_buffers`, 1GB `maintenance_work_mem`, 64MB `work_mem`, 8 parallel workers for in-memory HNSW vector index construction.
+> - **PostgreSQL 18 Vector Tuning**: 2GB `shared_buffers`, 1GB `maintenance_work_mem`, 64MB `work_mem`, 8 parallel workers, and a 2GB `/dev/shm` so those workers can allocate dynamic shared memory.
 > - **Redis 7 In-Memory Caching**: 1GB maxmemory with LRU eviction and 1024 connection backlog.
 
 ## Verification & High-Concurrency Benchmarks
@@ -63,12 +63,12 @@ docker run -d --name vllm --gpus all --ipc=host --restart always \
 - **Proxy Container**: `litellm` (`ghcr.io/berriai/litellm:main-latest`)
 - **Database Container**: `litellm-db` (`postgres:16-alpine`, volume: `litellm-data`)
 - **Cache & Coordination**: `redis` (`redis:7-alpine`, multi-worker rate limiting & distributed state)
-- **Port**: `4000` (loopback by default at `127.0.0.1:4000` when explicitly configured)
+- **Port**: `4000` on loopback by default (`127.0.0.1:4000`). Set `LITELLM_BIND_ADDRESS` to publish on another address.
 - **Master API Key**: operator-provided `LITELLM_MASTER_KEY`
-- **Supported Model Aliases**:
-  - `Qwen/Qwen3.8-27B-FP8` -> local `Qwen/Qwen3.8-27B-FP8`
-  - `qwen` -> local `Qwen/Qwen3.8-27B-FP8`
-  - `qwen3.8-27b` -> local `Qwen/Qwen3.8-27B-FP8`
+- **Supported Model Aliases** (all route to `VLLM_MODEL`; the default is `Qwen/Qwen3.8-27B-FP8`):
+  - `VLLM_MODEL` -> `openai/$VLLM_MODEL` on the local vLLM server
+  - `qwen` -> the same local model
+  - `qwen3.8-27b` -> the same local model
 - **Supported Protocols**:
   - OpenAI format: `http://<IP>:4000/v1/chat/completions` (Header: `Authorization: Bearer <key>`)
   - Anthropic Messages format: `http://<IP>:4000/v1/messages` (Header: `x-api-key: <key>`)
@@ -90,4 +90,3 @@ docker run -d --name vllm --gpus all --ipc=host --restart always \
   - HNSW index: `rag_chunks_embedding_hnsw_idx` on cosine distance (`vector_cosine_ops`, `m=16`, `ef_construction=64`)
   - GIN index: `rag_chunks_content_tsv_idx` for hybrid full-text search
 - **Verification**: `make test-rag` (`scripts/test_rag.sh`)
-

@@ -1,46 +1,41 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# SnapHop Local AI Stack - PostgreSQL 18 pgvector RAG Test Suite
-# ==============================================================================
-# Verifies:
-# 1. PostgreSQL 18 & pgvector extension health
-# 2. Schema tables (rag_documents, rag_chunks, HNSW index)
-# 3. Vector insertion & cosine similarity search
-# 4. Context retrieval & grounded generation via LiteLLM / Qwen
-# ==============================================================================
+# Verify pgvector health, an independent match_rag_chunks query, and a grounded answer.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-if [ -f "$PROJECT_DIR/.env" ]; then
-    # shellcheck disable=SC1091
-    source "$PROJECT_DIR/.env"
-fi
+# shellcheck source=load_env.sh
+source "$SCRIPT_DIR/load_env.sh"
+load_env_file "$PROJECT_DIR/.env"
 
 LITELLM_PORT="${LITELLM_PORT:-4000}"
 LITELLM_KEY="${LITELLM_MASTER_KEY:?Set LITELLM_MASTER_KEY in .env}"
 RAG_DB_USER="${RAG_DB_USER:-rag}"
 RAG_DB_NAME="${RAG_DB_NAME:-rag}"
 
+rag_psql() {
+    docker exec -i rag-db psql -v ON_ERROR_STOP=1 -U "$RAG_DB_USER" -d "$RAG_DB_NAME" "$@"
+}
+
 echo "=========================================================="
 echo "1. Checking PostgreSQL 18 & pgvector Extension Status"
 echo "=========================================================="
 
-PG_VERSION=$(docker exec rag-db psql -U "$RAG_DB_USER" -d "$RAG_DB_NAME" -t -A -c "SHOW server_version;")
-PGVECTOR_VERSION=$(docker exec rag-db psql -U "$RAG_DB_USER" -d "$RAG_DB_NAME" -t -A -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';")
+PG_VERSION="$(rag_psql -t -A -c "SHOW server_version;")"
+PGVECTOR_VERSION="$(rag_psql -t -A -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';")"
 
 echo "  PostgreSQL Version: ${PG_VERSION}"
 echo "  pgvector Extension: v${PGVECTOR_VERSION}"
 
 if [[ "$PG_VERSION" != 18* ]]; then
-    echo "Error: Expected PostgreSQL 18, found: $PG_VERSION"
+    echo "Error: Expected PostgreSQL 18, found: $PG_VERSION" >&2
     exit 1
 fi
 
 if [ -z "$PGVECTOR_VERSION" ]; then
-    echo "Error: pgvector extension is not installed!"
+    echo "Error: pgvector extension is not installed." >&2
     exit 1
 fi
 echo "  Status: PostgreSQL 18 + pgvector healthy."
@@ -50,66 +45,84 @@ echo "=========================================================="
 echo "2. Seeding Sample Knowledge Base Documents"
 echo "=========================================================="
 
-docker exec rag-db psql -U "$RAG_DB_USER" -d "$RAG_DB_NAME" -c "
-DO \$\$
+rag_psql -q <<'SQL'
+DO $$
 DECLARE
     doc_id UUID;
-    v1 vector(1536);
-    v2 vector(1536);
+    hardware vector(1536);
+    thermals vector(1536);
 BEGIN
-    -- Clear previous test entries
     DELETE FROM rag_documents WHERE title = 'DGX Spark Specification Doc';
 
-    -- Insert Parent Document
     INSERT INTO rag_documents (title, source, metadata)
-    VALUES ('DGX Spark Specification Doc', 'internal://specs/dgx-spark', '{\"version\": \"1.0\"}'::jsonb)
+    VALUES ('DGX Spark Specification Doc', 'internal://specs/dgx-spark', '{"version": "1.0"}'::jsonb)
     RETURNING id INTO doc_id;
 
-    -- Construct base vector 1 (focused on GPU architecture)
-    SELECT (ARRAY(SELECT (0.5 + random()*0.05)::real FROM generate_series(1, 1536)))::vector(1536) INTO v1;
+    SELECT (ARRAY(SELECT 0.5::real FROM generate_series(1, 1536)))::vector(1536) INTO hardware;
+    SELECT (ARRAY(SELECT -0.5::real FROM generate_series(1, 1536)))::vector(1536) INTO thermals;
 
-    -- Construct base vector 2 (orthogonal / different topic)
-    SELECT (ARRAY(SELECT (-0.5 + random()*0.05)::real FROM generate_series(1, 1536)))::vector(1536) INTO v2;
-
-    -- Insert Knowledge Chunks
     INSERT INTO rag_chunks (document_id, chunk_index, content, metadata, embedding)
-    VALUES 
-    (doc_id, 1, 'The DGX Spark inference node is equipped with an NVIDIA GB10 Blackwell GPU featuring 121 GB unified memory, operating on sm_121 architecture with native FP8 Tensor Cores.', '{\"topic\": \"hardware\"}'::jsonb, v1),
-    (doc_id, 2, 'The server chassis operates with silent fan profiles maintaining 46 degrees Celsius idle temperature at 12 Watts total power draw.', '{\"topic\": \"thermals\"}'::jsonb, v2);
+    VALUES
+    (doc_id, 1, 'The DGX Spark inference node is equipped with an NVIDIA GB10 Blackwell GPU featuring 121 GB unified memory, operating on sm_121 architecture with native FP8 Tensor Cores.', '{"topic": "hardware"}'::jsonb, hardware),
+    (doc_id, 2, 'The server chassis operates with silent fan profiles maintaining 46 degrees Celsius idle temperature at 12 Watts total power draw.', '{"topic": "thermals"}'::jsonb, thermals);
+END $$;
+SQL
 
-END \$\$;
-" > /dev/null
-
-CHUNK_COUNT=$(docker exec rag-db psql -U "$RAG_DB_USER" -d "$RAG_DB_NAME" -t -A -c "SELECT count(*) FROM rag_chunks;")
-echo "  Total Chunks in database: ${CHUNK_COUNT}"
+CHUNK_COUNT="$(rag_psql -t -A -c "SELECT count(*) FROM rag_chunks WHERE content LIKE '%GB10 Blackwell%';")"
+if [ "${CHUNK_COUNT:-0}" -lt 1 ]; then
+    echo "Error: RAG seed did not store the hardware chunk." >&2
+    exit 1
+fi
+echo "  Hardware chunks stored: ${CHUNK_COUNT}"
 echo ""
 
 echo "=========================================================="
 echo "3. Performing Vector Similarity Search (HNSW Index)"
 echo "=========================================================="
 
-# Search using a query vector close to vector 1
-RETRIEVED_CONTENT=$(docker exec rag-db psql -U "$RAG_DB_USER" -d "$RAG_DB_NAME" -t -A -c "
-WITH target_query AS (
-    SELECT embedding FROM rag_chunks WHERE content LIKE '%GB10 Blackwell%' LIMIT 1
-)
+HNSW_INDEX="$(rag_psql -t -A -c "SELECT indexname FROM pg_indexes WHERE indexname = 'rag_chunks_embedding_hnsw_idx';")"
+if [ "$HNSW_INDEX" != "rag_chunks_embedding_hnsw_idx" ]; then
+    echo "Error: HNSW index rag_chunks_embedding_hnsw_idx is missing." >&2
+    exit 1
+fi
+
+# Query is close to the hardware embedding and is not that stored vector.
+VECTOR_RESULT="$(rag_psql -t -A -c "
+SELECT content || chr(31) || similarity::text
+FROM match_rag_chunks(
+    (ARRAY[0::real] || ARRAY(SELECT 0.5::real FROM generate_series(1, 1535)))::vector(1536),
+    0.5,
+    1
+);
+")"
+RETRIEVED_CONTENT="${VECTOR_RESULT%%$'\x1f'*}"
+SIMILARITY_SCORE="${VECTOR_RESULT#*$'\x1f'}"
+
+if [[ "$RETRIEVED_CONTENT" != *GB10\ Blackwell* ]]; then
+    echo "Error: match_rag_chunks did not return the hardware chunk." >&2
+    echo "  Got: ${RETRIEVED_CONTENT}" >&2
+    exit 1
+fi
+if ! awk -v score="$SIMILARITY_SCORE" 'BEGIN { exit !(score > 0.9 && score < 1) }'; then
+    echo "Error: expected an independent cosine score in (0.9, 1), got ${SIMILARITY_SCORE}." >&2
+    exit 1
+fi
+
+HYBRID_CONTENT="$(rag_psql -t -A -c "
 SELECT content
-FROM rag_chunks, target_query
-ORDER BY rag_chunks.embedding <=> target_query.embedding
-LIMIT 1;
-")
+FROM match_rag_chunks(
+    (ARRAY[0::real] || ARRAY(SELECT 0.5::real FROM generate_series(1, 1535)))::vector(1536),
+    0.5,
+    1,
+    'GB10 Blackwell'
+);
+")"
+if [[ "$HYBRID_CONTENT" != *GB10\ Blackwell* ]]; then
+    echo "Error: hybrid match_rag_chunks did not return the hardware chunk." >&2
+    exit 1
+fi
 
-SIMILARITY_SCORE=$(docker exec rag-db psql -U "$RAG_DB_USER" -d "$RAG_DB_NAME" -t -A -c "
-WITH target_query AS (
-    SELECT embedding FROM rag_chunks WHERE content LIKE '%GB10 Blackwell%' LIMIT 1
-)
-SELECT round((1 - (rag_chunks.embedding <=> target_query.embedding))::numeric, 4)
-FROM rag_chunks, target_query
-ORDER BY rag_chunks.embedding <=> target_query.embedding
-LIMIT 1;
-")
-
-echo "  Query Focus: 'NVIDIA GB10 Blackwell GPU specs'"
+echo "  Query Focus: NVIDIA GB10 Blackwell GPU specs"
 echo "  Cosine Similarity Score: ${SIMILARITY_SCORE}"
 echo "  Retrieved Context Chunk:"
 echo "    \"${RETRIEVED_CONTENT}\""
@@ -120,7 +133,6 @@ echo "4. Executing Grounded RAG Query via LiteLLM Gateway"
 echo "=========================================================="
 
 QUESTION="What GPU model and unified memory capacity does the DGX Spark node use? Answer concisely in one sentence."
-
 PROMPT="You are a factual AI assistant. Answer the user question based strictly on the retrieved context below.
 
 Context:
@@ -128,7 +140,7 @@ ${RETRIEVED_CONTENT}
 
 Question: ${QUESTION}"
 
-PAYLOAD=$(jq -n \
+PAYLOAD="$(jq -n \
   --arg prompt "$PROMPT" \
   '{
     model: "qwen",
@@ -138,23 +150,35 @@ PAYLOAD=$(jq -n \
     ],
     temperature: 0.2,
     max_tokens: 256
-  }')
+  }')"
 
-RESPONSE=$(curl -s -X POST "http://127.0.0.1:${LITELLM_PORT}/v1/chat/completions" \
+response_body="$(mktemp)"
+http_code="$(curl -sS -o "$response_body" -w '%{http_code}' \
+  -X POST "http://127.0.0.1:${LITELLM_PORT}/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${LITELLM_KEY}" \
-  -d "$PAYLOAD")
-
-ANSWER=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty' | tr -d '\n' | sed 's/^[ \t]*//')
-
-if [ -z "$ANSWER" ]; then
-    echo "Warning: No content parsed. Raw response:"
-    echo "$RESPONSE"
-else
-    echo "  Question: ${QUESTION}"
-    echo "  Grounded Answer: ${ANSWER}"
+  --data-binary @- <<<"$PAYLOAD")" || {
+    rm -f "$response_body"
+    echo "Error: chat completion request failed." >&2
+    exit 1
+}
+if [ "$http_code" != "200" ]; then
+    echo "Error: chat completion returned HTTP ${http_code}." >&2
+    cat "$response_body" >&2
+    rm -f "$response_body"
+    exit 1
 fi
+ANSWER="$(jq -r '.choices[0].message.content // empty' "$response_body" | tr -d '\n' | sed 's/^[ \t]*//')"
+if [ -z "$ANSWER" ]; then
+    echo "Error: chat completion returned no content." >&2
+    cat "$response_body" >&2
+    rm -f "$response_body"
+    exit 1
+fi
+rm -f "$response_body"
 
+echo "  Question: ${QUESTION}"
+echo "  Grounded Answer: ${ANSWER}"
 echo ""
 echo "=========================================================="
 echo "PostgreSQL 18 pgvector RAG test completed successfully!"
