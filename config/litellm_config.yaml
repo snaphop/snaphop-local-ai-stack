@@ -27,6 +27,9 @@ litellm_settings:
   drop_params: true
   telemetry: false
   set_verbose: false
+  # vLLM reserves max_tokens inside --max-model-len. Lower the cap when the
+  # prompt would otherwise overflow. See config/context_window.py.
+  callbacks: context_window.proxy_handler_instance
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

@@ -4,6 +4,10 @@
 // (Qwen/Qwen3.8-27B-FP8 and qwen3.8-27b are the same route).
 // vLLM is capped at --max-model-len 32768, with the qwen3 reasoning
 // parser and the qwen3_coder tool-call parser. The vision encoder is loaded.
+// vLLM reserves limit.output inside that window. limit.input is the remainder
+// (32768 - 16384). OpenCode applies compaction.reserved only when limit.input
+// is set; reserved 4096 starts compaction that far below the input ceiling.
+// The LiteLLM pre-call hook still lowers max_tokens if a later turn is larger.
 //
 // Use a scoped virtual key from the LiteLLM admin UI, not the master key:
 //
@@ -54,6 +58,7 @@
           },
           "limit": {
             "context": 32768,
+            "input": 16384,
             "output": 16384
           },
           "modalities": {

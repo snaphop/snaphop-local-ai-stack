@@ -186,7 +186,12 @@ print(response.choices[0].message.content)
 
 `config/opencode.jsonc` points OpenCode at the LiteLLM alias `qwen`
 (`Qwen/Qwen3.8-27B-FP8`). It uses `LITELLM_API_KEY` and does not store a key.
-The context limit matches the served `--max-model-len` of 32768.
+The context limit matches the served `--max-model-len` of 32768. vLLM reserves
+the requested `max_tokens` inside that window, and OpenCode sends its output
+limit of 16384 as that cap. `limit.input` is the other 16384 tokens.
+Compaction starts 4096 tokens before that input ceiling. The gateway asks
+vLLM to count the prompt and lowers `max_tokens` when the prompt and the
+requested cap would still exceed the window.
 
 ```bash
 export LITELLM_API_KEY='your_virtual_key'
