@@ -1,0 +1,82 @@
+// OpenCode client for the Qwen model served by this stack.
+//
+// The gateway model id is the LiteLLM alias "qwen"
+// (Qwen/Qwen3.8-27B-FP8 and qwen3.8-27b are the same route).
+// vLLM is capped at --max-model-len 32768, with the qwen3 reasoning
+// parser and the qwen3_coder tool-call parser. The vision encoder is loaded.
+//
+// Use a scoped virtual key from the LiteLLM admin UI, not the master key:
+//
+//   export LITELLM_API_KEY='sk-...'
+//   export OPENCODE_CONFIG="$PWD/config/opencode.jsonc"
+//   opencode models snaphop
+//
+// Copy this file to ~/.config/opencode/opencode.jsonc to use it in every
+// project. OpenCode merges configs, so a project opencode.json still wins.
+// If LITELLM_PORT or LITELLM_BIND_ADDRESS is not the loopback default,
+// change options.baseURL to match.
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "snaphop/qwen",
+  "small_model": "snaphop/qwen",
+  "share": "disabled",
+  "compaction": {
+    "auto": true,
+    "prune": true,
+    "reserved": 4096
+  },
+  "provider": {
+    "snaphop": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "SnapHop",
+      "options": {
+        "baseURL": "http://127.0.0.1:4000/v1",
+        "apiKey": "{env:LITELLM_API_KEY}",
+        "timeout": 600000,
+        "headerTimeout": 300000,
+        "chunkTimeout": 120000
+      },
+      "models": {
+        "qwen": {
+          "name": "Qwen3.8 27B FP8",
+          "family": "qwen",
+          "status": "active",
+          "attachment": true,
+          "reasoning": true,
+          "temperature": true,
+          "tool_call": true,
+          "interleaved": {
+            "field": "reasoning_content"
+          },
+          "cost": {
+            "input": 0,
+            "output": 0
+          },
+          "limit": {
+            "context": 32768,
+            "output": 16384
+          },
+          "modalities": {
+            "input": ["text", "image"],
+            "output": ["text"]
+          },
+          "options": {
+            "temperature": 1,
+            "topP": 0.95
+          },
+          "variants": {
+            "low": {
+              "reasoningEffort": "low"
+            },
+            "medium": {
+              "reasoningEffort": "medium"
+            },
+            "xhigh": {
+              "reasoningEffort": "xhigh"
+            }
+          }
+        }
+      }
+    }
+  }
+}
