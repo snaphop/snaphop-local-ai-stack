@@ -63,6 +63,58 @@ if [ "$preset" != "from-env" ]; then
     exit 1
 fi
 
+printf '%s\n' 'Checking context-window output clamp'
+python3 - <<'PY'
+import importlib.util
+from pathlib import Path
+
+path = Path('config/context_window.py')
+spec = importlib.util.spec_from_file_location('context_window', path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+# The reported failure: 16384 requested output tokens and a prompt of at least
+# 16385 against a 32768 window. Leave a 64-token margin for the chat template.
+assert module.clamped_output_tokens(16384, 16385, 32768, margin=64) == 16319
+assert module.clamped_output_tokens(16384, 20000, 32768, margin=64) == 12704
+assert module.clamped_output_tokens(50, 100, 32768, margin=64) is None
+assert module.clamped_output_tokens(16384, 32768, 32768, margin=64) is None
+assert module.clamped_output_tokens(16384, 32760, 32768, margin=64) == 8
+assert module.clamped_output_tokens(None, 100, 32768) is None
+assert module.requested_output({'max_tokens': 16384}) == 16384
+assert module.requested_output({'max_completion_tokens': 100}) == 100
+assert module.requested_output({'max_tokens': 10, 'max_completion_tokens': 50}) == 50
+assert module.requested_output({}) is None
+assert module.requested_output({'max_tokens': True}) is None
+data = {'max_tokens': 16384, 'max_completion_tokens': 20000, 'model': 'qwen'}
+module.apply_output_cap(data, 1000)
+assert data == {'max_tokens': 1000, 'max_completion_tokens': 1000, 'model': 'qwen'}
+data = {'max_tokens': 100}
+module.apply_output_cap(data, 1000)
+assert data['max_tokens'] == 100
+payload = module.tokenize_payload(
+    {
+        'messages': [{'role': 'user', 'content': 'hi'}],
+        'tools': [{'type': 'function'}],
+        'api_key': 'secret',
+    },
+    'Qwen/Qwen3.8-27B-FP8',
+)
+assert payload['model'] == 'Qwen/Qwen3.8-27B-FP8'
+assert payload['add_generation_prompt'] is True
+assert payload['tools'] == [{'type': 'function'}]
+assert 'api_key' not in payload
+assert module.tokenize_payload({'prompt': 'hi'}, 'm') == {'model': 'm', 'prompt': 'hi'}
+assert module.tokenize_payload({}, 'm') is None
+assert module.served_context_limit(32768, 65536) == 32768
+assert module.served_context_limit(262144, 32768) == 32768
+assert module.served_context_limit(None, 32768) == 32768
+assert module.prompt_token_count({'count': 12, 'tokens': [1, 2]}) == 12
+assert module.prompt_token_count({'tokens': [1, 2, 3]}) == 3
+assert module.proxy_handler_instance is not None
+print('Context-window clamp checks passed.')
+PY
+
 printf '%s\n' 'Checking Compose and credential boundaries with synthetic values'
 python3 - <<'PY'
 import json
@@ -101,6 +153,10 @@ assert 'master_key: os.environ/LITELLM_MASTER_KEY' in Path('config/litellm_confi
 config = Path('config/litellm_config.yaml').read_text()
 assert 'model_name: os.environ/VLLM_MODEL' in config
 assert 'model: os.environ/VLLM_LITELLM_MODEL' in config
+assert 'callbacks: context_window.proxy_handler_instance' in config
+litellm_volumes = services['litellm']['volumes']
+assert any(item.get('target') == '/app/context_window.py' for item in litellm_volumes)
+assert services['litellm']['environment']['VLLM_MAX_MODEL_LEN'] == env['VLLM_MAX_MODEL_LEN']
 assert services['litellm']['environment']['VLLM_MODEL'] == env['VLLM_MODEL']
 assert services['litellm']['environment']['VLLM_LITELLM_MODEL'] == 'openai/' + env['VLLM_MODEL']
 vllm_command = services['vllm']['command']

@@ -11,3 +11,7 @@ scratch/
 # OS artifacts
 .DS_Store
 Thumbs.db
+
+# Python bytecode from local checks
+__pycache__/
+*.py[cod]
