@@ -163,6 +163,9 @@ vllm_command = services['vllm']['command']
 if isinstance(vllm_command, list):
     vllm_command = ' '.join(str(part) for part in vllm_command)
 assert env['VLLM_MODEL'] in str(vllm_command)
+assert '"method":"mtp"' in vllm_command
+assert f'"num_speculative_tokens":{env["VLLM_SPECULATIVE_TOKENS"]}' in vllm_command
+assert '--enable-prefix-caching' in vllm_command
 assert int(services['rag-db']['shm_size']) == 2 * 1024 ** 3
 assert 'healthcheck' in services['litellm-db']
 depends = services['litellm']['depends_on']

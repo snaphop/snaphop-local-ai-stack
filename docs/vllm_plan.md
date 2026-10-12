@@ -48,7 +48,7 @@ docker logs -f vllm      # wait for "Application startup complete"
 - `Qwen/Qwen3.8-27B-FP8`: **chosen by the user.** Official FP8 (fine-grained, block size 128), about 31 GB on disk. Use this one.
 - `nvidia/Qwen3.8-27B-NVFP4`: optional faster alternative (about 21 GB on disk). Only try it if the user asks.
 - `Qwen/Qwen3.8-27B`: official BF16, about 56 GB. It fits, but decode will be slow (a few tokens/s). Use it for quality baselines only.
-- Ignore the GGUF, MLX, "Uncensored", "abliterated" and other community fine-tunes. `incoai/Qwen3.8-27B-DFlash2` looks like a speculative-decoding drafter, which is an optional later experiment.
+- Ignore the GGUF, MLX, "Uncensored", "abliterated" and other community fine-tunes. `incoai/Qwen3.8-27B-DFlash2` is an external speculative drafter and stays optional. The compose service uses the checkpoint's own MTP head instead (`--speculative-config` method `mtp`), which does not download a second model.
 
 It is a dense 27.8B-parameter model with native 262K context and a vision encoder. Only 1 in 4 layers uses full attention, so the KV cache is small and `--max-model-len` can be raised well past 32768 if memory allows. If the container errors with an unknown architecture, move to a newer image tag. Read the model card (<https://huggingface.co/Qwen/Qwen3.8-27B-FP8>) and the vLLM recipe for the recommended flags, such as the reasoning parser, tool-call parser (`--enable-auto-tool-choice`) and sampling settings, and add them. If the model has a vision encoder and you only need text, `--limit-mm-per-prompt '{"image":0}'` saves memory.
 
