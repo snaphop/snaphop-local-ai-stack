@@ -36,6 +36,8 @@ docker run -d --name vllm --gpus all --ipc=host --restart always \
     --max-num-seqs 64 \
     --max-num-batched-tokens 8192 \
     --async-scheduling \
+    --enable-prefix-caching \
+    --speculative-config '{"method":"mtp","num_speculative_tokens":3}' \
     --enable-auto-tool-choice \
     --tool-call-parser qwen3_coder \
     --reasoning-parser qwen3
@@ -47,13 +49,16 @@ docker run -d --name vllm --gpus all --ipc=host --restart always \
 > - **Batch Concurrency (`--max-num-seqs 64`)**: Eliminates the 16-request queue bottleneck, enabling up to 64 requests to decode concurrently.
 > - **Prefill Acceleration (`--max-num-batched-tokens 8192`)**: Uses 4x larger prefill token batches for higher Blackwell Tensor Core utilization.
 > - **Asynchronous Scheduling (`--async-scheduling`)**: Overlaps CPU scheduler iterations with GPU kernel execution.
+> - **Prefix caching (`--enable-prefix-caching`)**: Reuses a shared prompt prefix. This image already enabled it for the hybrid model; the flag keeps that explicit.
+> - **MTP speculative decoding (`num_speculative_tokens` 3)**: The FP8 checkpoint has one MTP layer (`mtp_num_hidden_layers: 1`). vLLM reruns that layer to draft 3 tokens and keeps a draft only when the target model would have emitted it. On this host, one stream moved from 8.4 tokens/s to about 17 tokens/s, with a mean acceptance length of about 3.0 and a draft acceptance rate of about 65%. `VLLM_SPECULATIVE_TOKENS=8` is the edit-heavy alternative reported for this GPU; it was not remeasured here.
 > - **LiteLLM Multi-Worker Scaling (`--num_workers 8`)**: Scales across the 20 ARM64 cores (10 Cortex-X925 + 10 Cortex-A725).
 > - **PostgreSQL 18 Vector Tuning**: 2GB `shared_buffers`, 1GB `maintenance_work_mem`, 64MB `work_mem`, 8 parallel workers, and a 2GB `/dev/shm` so those workers can allocate dynamic shared memory.
 > - **Redis 7 In-Memory Caching**: 1GB maxmemory with LRU eviction and 1024 connection backlog.
 
 ## Verification & High-Concurrency Benchmarks
 - **Models Endpoint**: `GET http://127.0.0.1:8000/v1/models` returns `Qwen/Qwen3.8-27B-FP8`.
-- **Serving Benchmark (30 Concurrent Requests)**:
+- **Single-stream decode (MTP, 3 draft tokens, 256 output tokens)**: about 17 tokens/s, up from 8.4 tokens/s with speculative decoding off. Engine metrics: mean acceptance length about 3.0, draft acceptance about 65%.
+- **Serving Benchmark (30 Concurrent Requests, before MTP)**:
   - Request throughput: **1.12 req/s** (2.4x higher than 16-seq baseline)
   - Total token throughput: **644.55 tokens/sec**
   - Peak output token throughput: **180.00 tokens/sec**

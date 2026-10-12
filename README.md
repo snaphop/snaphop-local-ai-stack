@@ -238,11 +238,15 @@ The stack incorporates the following hardware-tailored flags:
 | `--max-num-seqs` | `64` | Removes concurrency bottleneck, enabling up to 64 parallel decode streams |
 | `--max-num-batched-tokens` | `8192` | 4x larger prefill batch size maximizing Blackwell Tensor Core compute efficiency |
 | `--async-scheduling` | Enabled | Overlaps CPU host scheduler steps with GPU kernel execution |
+| `--enable-prefix-caching` | Enabled | Reuses a shared prompt prefix. Hybrid Qwen3.8 attention does not always default this on |
+| `--speculative-config` | MTP, 3 draft tokens | The checkpoint's multi-token prediction layer proposes tokens that the model verifies in one step. Measured single-stream decode on this host went from 8.4 tokens/s to about 17 tokens/s. `VLLM_SPECULATIVE_TOKENS` changes the depth |
 | `--num_workers` (LiteLLM) | `8` | Scales across the 20 ARM64 CPU cores (10 Cortex-X925 + 10 Cortex-A725) for high-concurrency gateway throughput |
 | PostgreSQL 18 Buffer Tuning | `shared_buffers=2GB`, `maintenance_work_mem=1GB`, `shm_size=2GB` | Parallel index builds allocate dynamic shared memory in `/dev/shm`; Docker's 64MB default is too small for 8 workers |
 | Redis In-Memory Limits | `1GB` maxmemory, `allkeys-lru` | High-throughput distributed rate limiting and state sync with 1024 socket backlog |
 
-### Benchmark Results (30 Concurrent Requests)
+Single-stream decode of this FP8 27B checkpoint was 8.4 tokens/s on this GB10: each token rereads the weights across about 273 GB/s of unified memory. With MTP at 3 draft tokens, the same host measured about 17 tokens/s (mean acceptance length about 3.0). The 30-request figures below are from the earlier configuration, before MTP.
+
+### Benchmark Results (30 Concurrent Requests, before MTP)
 - **Request Throughput**: 1.12 req/s (2.4x higher than 16-seq baseline)
 - **Total Token Throughput**: **644.55 tokens/sec**
 - **Peak Output Throughput**: **180.00 tokens/sec**
