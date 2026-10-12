@@ -182,6 +182,22 @@ response = client.chat.completions.create(
 print(response.choices[0].message.content)
 ```
 
+### 5. OpenCode
+
+`config/opencode.jsonc` points OpenCode at the LiteLLM alias `qwen`
+(`Qwen/Qwen3.8-27B-FP8`). It uses `LITELLM_API_KEY` and does not store a key.
+The context limit matches the served `--max-model-len` of 32768.
+
+```bash
+export LITELLM_API_KEY='your_virtual_key'
+export OPENCODE_CONFIG="$PWD/config/opencode.jsonc"
+opencode models snaphop
+```
+
+Select `snaphop/qwen`, or copy the file to `~/.config/opencode/opencode.jsonc`
+to use it outside this repository. Change `options.baseURL` if LiteLLM is not
+on `127.0.0.1:4000`.
+
 ---
 
 ## Admin Web UI & Security
